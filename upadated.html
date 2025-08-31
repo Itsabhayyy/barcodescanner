@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Camera Barcode Scanner — Fixed</title>
+  <script src="https://unpkg.com/html5-qrcode" type="text/javascript"></script>
+  <style>
+    body { font-family: system-ui, Arial, sans-serif; padding: 16px; }
+    #reader { width: 100%; max-width: 600px; margin: 8px 0; }
+    textarea { width: 100%; height: 100px; font-size: 16px; margin-top: 8px; }
+    button { padding: 8px 12px; margin-right: 8px; }
+    #error { color: #b00020; margin-top: 8px; }
+  </style>
+</head>
+<body>
+  <h2>Scan Barcode with Camera (improved)</h2>
+
+  <div id="reader"></div>
+
+  <div>
+    <button id="startBtn">Start Camera</button>
+    <button id="stopBtn" disabled>Stop Camera</button>
+    <label style="margin-left: 10px;">Or choose image:
+      <input id="fileInput" type="file" accept="image/*" />
+    </label>
+  </div>
+
+  <textarea id="output" placeholder="Scanned barcode will appear here..." readonly></textarea>
+  <div id="error" role="status"></div>
+
+  <script>
+    document.addEventListener('DOMContentLoaded', () => {
+      const output = document.getElementById('output');
+      const errorEl = document.getElementById('error');
+      const startBtn = document.getElementById('startBtn');
+      const stopBtn = document.getElementById('stopBtn');
+      const fileInput = document.getElementById('fileInput');
+      const readerId = 'reader';
+
+      let html5QrCode;
+      try {
+        html5QrCode = new Html5Qrcode(readerId);
+      } catch (e) {
+        console.error('Library init error', e);
+        errorEl.textContent = 'Library failed to initialize. Check network and script tag.';
+        return;
+      }
+
+      async function startWithCamera(cameraId) {
+        try {
+          await html5QrCode.start(
+            cameraId,
+            { fps: 10, qrbox: { width: 250, height: 250 } },
+            (decodedText, decodedResult) => {
+              output.value = decodedText;
+              if (navigator.vibrate) navigator.vibrate(100);
+            },
+            (errorMessage) => {
+              // scan errors (noisy) — keep quiet in UI but available in console
+              // console.debug('scan error', errorMessage);
+            }
+          );
+
+          startBtn.disabled = true;
+          stopBtn.disabled = false;
+          errorEl.textContent = '';
+        } catch (err) {
+          console.error('start error', err);
+          const msg = (err && err.message) ? err.message : String(err);
+          if (msg.toLowerCase().includes('notallowed') || msg.toLowerCase().includes('permission')) {
+            errorEl.textContent = 'Camera permission denied. Please allow camera access in browser settings.';
+          } else if (msg.toLowerCase().includes('https')) {
+            errorEl.textContent = 'Camera requires secure origin (HTTPS). Serve this page over HTTPS or open from localhost.';
+          } else {
+            errorEl.textContent = 'Unable to start camera: ' + msg;
+          }
+        }
+      }
+
+      startBtn.addEventListener('click', async () => {
+        errorEl.textContent = 'Requesting camera access...';
+        try {
+          const cameras = await Html5Qrcode.getCameras();
+          if (!cameras || cameras.length === 0) {
+            errorEl.textContent = 'No cameras found on this device.';
+            return;
+          }
+
+          // prefer rear/back/environment camera when available
+          let chosen = cameras.find(c => /back|rear|environment|rear camera/i.test(c.label)) || cameras[cameras.length - 1];
+          const cameraId = chosen.id || chosen;
+          await startWithCamera(cameraId);
+        } catch (err) {
+          console.error('getCameras/start error', err);
+          const name = err && err.name ? err.name : '';
+          if (name === 'NotAllowedError') {
+            errorEl.textContent = 'Camera permission denied. Please allow camera access.';
+          } else {
+            const msg = (err && err.message) ? err.message : String(err);
+            errorEl.textContent = 'Camera error: ' + msg;
+          }
+        }
+      });
+
+      stopBtn.addEventListener('click', async () => {
+        try {
+          await html5QrCode.stop();
+        } catch (err) {
+          console.error('stop error', err);
+        } finally {
+          startBtn.disabled = false;
+          stopBtn.disabled = true;
+        }
+      });
+
+      fileInput.addEventListener('change', async (e) => {
+        const file = e.target.files && e.target.files[0];
+        if (!file) return;
+        errorEl.textContent = 'Decoding image...';
+        try {
+          const result = await Html5Qrcode.scanFile(file, true);
+          output.value = result;
+          errorEl.textContent = '';
+        } catch (err) {
+          console.error('scanFile error', err);
+          const msg = (err && err.message) ? err.message : String(err);
+          errorEl.textContent = 'Failed to decode image: ' + msg;
+        }
+      });
+
+    });
+  </script>
+</body>
+</html>
